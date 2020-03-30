@@ -19,7 +19,6 @@ import math
 import random
 import numpy as np
 import matplotlib
-# matplotlib.use('Qt5Agg')
 import matplotlib.pyplot as plt
 from collections import namedtuple
 from itertools import count
@@ -88,13 +87,13 @@ class DQN(nn.Module):
 
     def __init__(self, h, w, outputs):
         super(DQN, self).__init__()
-        self.conv1 = nn.Conv2d(1, 8, kernel_size=7, stride=3)
-        self.conv2 = nn.Conv2d(8, 16, kernel_size=3, stride=1)
-        self.conv3 = nn.Conv2d(16, 32, kernel_size=3, stride=1)
+        self.conv1 = nn.Conv2d(1, 8, kernel_size=5, stride=3)
+        self.conv2 = nn.Conv2d(8, 32, kernel_size=3, stride=1)
+        # self.conv3 = nn.Conv2d(16, 32, kernel_size=3, stride=1)
         self.pool1 = nn.MaxPool2d(2, 2)
         self.pool2 = nn.MaxPool2d(2, 2)
 
-        self.fc1 = nn.Linear(480, 124)
+        self.fc1 = nn.Linear(384, 124)
         self.fc2  = nn.Linear(124, 5)
 
     # Called with either one element to determine next action, or a batch
@@ -104,7 +103,7 @@ class DQN(nn.Module):
         x = self.pool1(x)
         x = F.relu(self.conv2(x))
         x = self.pool2(x)
-        x = F.relu(self.conv3(x))
+        # x = F.relu(self.conv3(x))
         x = F.relu(self.fc1(x.view(x.size(0), -1)))
         x = F.relu(self.fc2(x))
         return x
@@ -116,7 +115,7 @@ This removes a lot of unessesary information, allowing our model to train more e
 """
 
 resize = T.Compose([T.ToPILImage(),
-                    T.Resize((80, 100), interpolation=Image.CUBIC),
+                    T.Resize((60, 70), interpolation=Image.CUBIC),
                     T.ToTensor()])
 
 
@@ -129,7 +128,7 @@ def get_screen(screen):
     # Returned screen requested by gym is 400x600x3, but is sometimes larger
     # such as 800x1200x3. Transpose it into torch order (CHW).
     # screen = env.render(mode='rgb_array')
-    # env.render()
+    env.render()
     
     # Convert to grayscale (weights based off CCIR 601)
     screen = screen[:,:,0] * 0.2989 + screen[:,:,1] * 0.5870 + screen[:,:,2] * 0.1140
@@ -139,8 +138,8 @@ def get_screen(screen):
     screen = screen[0:-50,:]
     
     # Crop the screen even more
-    [height, width] = screen.shape
-    screen = screen[0:int(height*1.0), int(width*0.25):int(width*0.75)]
+    # [height, width] = screen.shape
+    # screen = screen[0:int(height*1.0), int(width*0.25):int(width*0.75)]
     
     # Set the screen values to either black or white
     screen[screen < 125] = 0
@@ -154,26 +153,21 @@ def get_screen(screen):
     return resize(screen).unsqueeze(0).to(device)
 
 env.reset()
-
-def save_model(policy_net, target_net, memory, optimizer, model_name):
-    torch.save({'policy_net': policy_net.state_dict(),
-                'target_net': target_net.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'replay_memory': memory.memory,
-                'memory_position': memory.position,
-                }, model_name)
-
-
-
-def load_model(policy_net, target_net, memory, optimizer, model_name):
-    checkpoint = torch.load(model_name)
-    policy_net.load_state_dict(checkpoint['policy_net'])
-    target_net.load_state_dict(checkpoint['target_net'])
-    optimizer.load_state_dict(checkpoint['optimizer'])
-    memory.memory = checkpoint['replay_memory']
-    memory.position = checkpoint['memory_position']
-
-
+# plt.figure(1)
+# for x in range(100):
+#     screen, _, _, _ =env.step([0, 0.2, 0])
+# 
+#     plt.clf()
+#     plt.imshow(get_screen(screen).cpu().squeeze(0).numpy()[0],
+#                cmap='gray', 
+#                vmin=0, vmax=1)
+#     plt.title('Example extracted screen')
+#     plt.show()
+# 
+#     plt.pause(0.001) 
+#     if is_ipython:
+#         display.clear_output(wait=True)
+#         display.display(plt.gcf())
 
 """**Training:**
 
@@ -186,19 +180,19 @@ space.
 plot_durations allows us to plot our results as the model is training.
 """
 
-BATCH_SIZE = 4
-GAMMA = 0.96
-EPS_START = 0.99
-EPS_END = 0.1
-EPS_DECAY = 1e6
-TARGET_UPDATE = 25
+BATCH_SIZE = 64
+GAMMA = 0.95
+EPS_START = 0.90
+EPS_END = 0.05
+EPS_DECAY = 1e5
+TARGET_UPDATE = 10
 
 ACTIONS = np.array([
-    [0.0, 1.0, 0.3],  # Accelerate
-    [-1.0, 0.0, 0.0], # Left
-    [1.0, 0.0, 0.0],  # Right
-    [0.0, 0.0, 0.8],  # Brake
-    [0.0, 0.0, 0.0]   # Nothing
+    [0.0, 1.0, 0.0],  # Accelerate
+    [0.0, 0.0, 0.7],  # Brake
+    [1.0, 0.05, 0.0],  # Right
+    [-1.0, 0.05, 0.0], # Left
+    [0.0, 0.05, 0.0]   # Nothing
 ])
 
 # Get screen size so that we can initialize layers correctly based on shape
@@ -215,8 +209,9 @@ target_net = DQN(screen_height, screen_width, n_actions).to(device)
 target_net.load_state_dict(policy_net.state_dict())
 target_net.eval()
 
-optimizer = optim.Adam(policy_net.parameters(), lr=0.01, weight_decay=1e-6)
+optimizer = optim.Adam(policy_net.parameters(), lr=0.001, weight_decay=1e-6)
 memory = ReplayMemory(10000)
+
 
 steps_done = 0
 
@@ -234,18 +229,16 @@ def select_action(state):
             # found, so we pick action with the larger expected reward.
             action = policy_net(state)
             action = action.max(1)[1].view(1, 1)
-            # print("Policy net result:", action)
             return action
     else:
-        action = torch.tensor([np.random.choice(5, 1)], device=device, dtype=torch.long)
+        choice = np.random.choice(5, 1, p=[0.2, 0.1, 0.25, 0.25, 0.2])
+        action = torch.tensor([choice], device=device, dtype=torch.long)
         # print("Random:", action, env.action_space.sample())
         return action
 
 
 episode_durations = []
 
-# Uncomment to load previous model
-# load_model(policy_net, target_net, memory, optimizer, '5')
 
 def plot_durations():
     plt.figure(2)
@@ -325,7 +318,7 @@ this block in our notebook, extending the training so we don't need to guess how
 to see success.
 """
 
-num_episodes = 40
+num_episodes = 4000
 frame_skips = 2
 for i_episode in range(num_episodes):
     # Initialize the environment and state
@@ -338,20 +331,50 @@ for i_episode in range(num_episodes):
     for t in count():        
         # Select and perform an action
         action = select_action(state).cpu().numpy()
+        
+        # Accelerate for first 10 frames
+        if t < 25:
+            action = np.array([[0]])
         # action = np.clip(action, env.action_space.low, env.action_space.high)
         # if action.shape[0] == 1:
-        #     action = action[0]        
-        
+        #     action = action[0]
+
+        f_reward = 0.0
         for i in range(frame_skips):
-            observation, reward, done, _ = env.step(ACTIONS[action[0,0]])
+            _, reward, done, _ = env.step(ACTIONS[action[0,0]])
+            f_reward += reward
             total_reward += reward
-        
-        action = torch.tensor(action, device=device)
-        reward = torch.tensor([reward], device=device)
+            if done:
+                break
 
         # Observe new state
         last_screen = current_screen
-        current_screen = get_screen(observation)
+        current_screen = get_screen(env.render(mode='rgb_array'))
+        screen_np = current_screen.cpu().numpy()[0,0]
+        # 
+        # plt.figure(1)
+        # plt.clf()
+        # plt.imshow(screen_np,
+        #            cmap='gray', 
+        #            vmin=0, vmax=1)
+        # plt.title('Example extracted screen')
+        # plt.show()
+    
+        plt.pause(0.001) 
+        if is_ipython:
+            display.clear_output(wait=True)
+            display.display(plt.gcf())
+        
+        # If we can't see anything, severly punish and move on
+        screen_np[43:, 30:40] = 1.0
+        if t > 25 and not np.any(screen_np - 1.0):
+            f_reward = -100.0
+            total_reward += f_reward
+            done = True
+        
+        action = torch.tensor(action, device=device)
+        reward = torch.tensor([f_reward], device=device)
+
         if not done:
             next_state = current_screen - last_screen
         else:
@@ -374,12 +397,17 @@ for i_episode in range(num_episodes):
     if i_episode % TARGET_UPDATE == 0:
         target_net.load_state_dict(policy_net.state_dict())
 
-    if i_episode % 5 == 0:
-        save_model(policy_net, target_net, memory, optimizer, str(i_episode))
-
 print('Complete')
 env.render()
 env.close()
 plt.ioff()
 plt.show()
 
+# Save the network's parameters when we want to
+torch.save(target_net.state_dict(), './racing_BW_target_net_params')
+
+# Save the training results so we can plot them better later
+# Pycharm was struggling with pyplot at times so plotting the results 
+# in a seperate file helped with that
+durations_t = torch.tensor(episode_durations, dtype=torch.float)
+np.savetxt('./racing_BW_training_results.csv', durations_t.numpy(), delimiter=' ')
